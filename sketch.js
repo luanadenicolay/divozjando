@@ -5,6 +5,8 @@ let mic, fft, volumenSuavizado = 0;
 let umbralRuido = 0.005, umbralCalido = 0.05;
 let desplazamientoMaximo = 100;
 
+let colorHuePorCapa = new Array(cantCapas).fill(0);
+
 let partesCara = [
   { nombre: 'nariz', x: 270, y: 150, w: 100, h: 475, img: null },
   { nombre: 'boca', x: 200, y: 675, w: 250, h: 100, img: null },
@@ -20,7 +22,7 @@ function preload() {
   imgColor = loadImage('data/foto1.jpg');
   imgForma = loadImage('data/mascara.png');
   for (let i = 0; i < partesCara.length; i++) {
-           partesCara[i].img = loadImage('data/cara' + i + '.png');
+    partesCara[i].img = loadImage('data/cara' + i + '.png');
   }
 }
 
@@ -37,6 +39,12 @@ function setup() {
     resultados[r].loadPixels();
   }
 
+  // Acumuladores para el color promedio por capa
+  let sumaR = Array(cantCapas).fill(0);
+  let sumaG = Array(cantCapas).fill(0);
+  let sumaB = Array(cantCapas).fill(0);
+  let cuentaPixeles = Array(cantCapas).fill(0);
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       let index = (x + y * width) * 4;
@@ -50,10 +58,9 @@ function setup() {
       let bb = imgForma.pixels[index + 2];
 
       let brillo = (br + bg + bb) / 3.0;
-      let escala = brillo / 255;
       let diferencia = abs(255 - brillo);
       let umbral = 0;
-      
+
       if (abs(250 - brillo) < diferencia) {
         diferencia = abs(250 - brillo);
         umbral = 1;
@@ -71,16 +78,33 @@ function setup() {
         umbral = 4;
       }
 
-                let brilloReal = (r+g+b)/3.0
-            resultados[umbral].pixels[index] = brilloReal;
-            resultados[umbral].pixels[index + 1] = brilloReal;
-            resultados[umbral].pixels[index + 2] = brilloReal;
-            resultados[umbral].pixels[index + 3] = 255;
-            } 
+      let brilloReal = (r + g + b) / 3.0;
+      resultados[umbral].pixels[index] = brilloReal;
+      resultados[umbral].pixels[index + 1] = brilloReal;
+      resultados[umbral].pixels[index + 2] = brilloReal;
+      resultados[umbral].pixels[index + 3] = 255;
+
+      // Acumular colores por capa
+      sumaR[umbral] += r;
+      sumaG[umbral] += g;
+      sumaB[umbral] += b;
+      cuentaPixeles[umbral]++;
+    }
   }
 
   for (let r = 0; r < cantCapas; r++) {
     resultados[r].updatePixels();
+
+    // Calcular color promedio por capa
+    if (cuentaPixeles[r] > 0) {
+      let avgR = sumaR[r] / cuentaPixeles[r];
+      let avgG = sumaG[r] / cuentaPixeles[r];
+      let avgB = sumaB[r] / cuentaPixeles[r];
+      let col = color(avgR, avgG, avgB);
+      colorHuePorCapa[r] = hue(col);
+    } else {
+      colorHuePorCapa[r] = 0; // Default
+    }
   }
 
   posicionesOriginales = partesCara.map(p => ({ x: p.x, y: p.y }));
@@ -96,6 +120,7 @@ function setup() {
 function draw() {
   background(0);
 
+
   let volumen = mic.getLevel() * 5;
   volumenSuavizado = lerp(volumenSuavizado, volumen, 0.1);
   let espectro = fft.analyze();
@@ -103,66 +128,70 @@ function draw() {
 
   if (volumenSuavizado > umbralRuido) {
     if (volumenSuavizado > umbralCalido) {
-      targetTonoFactor = 1.5; // Cálido
+      targetTonoFactor = 1.5;
     } else {
-      targetTonoFactor = 1.0; // Intermedio
+      targetTonoFactor = 1.0;
     }
   } else {
     if (agudos > 180) {
-      targetTonoFactor = 0.7; // Frío
+      targetTonoFactor = 0.7;
     }
   }
 
   currentTonoFactor = lerp(currentTonoFactor, targetTonoFactor, 0.05);
 
-  // Dibujar capas con tintado suave
-  push();
-  colorMode(HSB);
-  for (let r = 0; r < cantCapas; r++) {
-    let h = 40;
-    tint(h, 255, 255);
-    image(resultados[r], 0, 0);
-  }
-  pop();
+  // Dibujar capas con su tinte único
+ push();
+colorMode(HSB);
+
+// Mapea la saturación con el volumen (más voz = más color)
+let saturacionDinamica = map(volumenSuavizado, 0, 0.3, 50, 255);
+saturacionDinamica = constrain(saturacionDinamica, 50, 255);
+
+for (let r = 0; r < cantCapas; r++) {
+  let h = colorHuePorCapa[r];
+  tint(h, saturacionDinamica, 255);
+  image(resultados[r], 0, 0);
+}
+pop();
 
   // Dibujar y mover partes de la cara
+  for (let i = 0; i < partesCara.length; i++) {
+    let parte = partesCara[i];
+    let centroX = width / 2;
+    let centroY = height / 2;
+    let dxCentro = centroX - (parte.x + parte.w / 2);
+    let dyCentro = centroY - (parte.y + parte.h / 2);
+    let distanciaActual = dist(parte.x, parte.y, posicionesOriginales[i].x, posicionesOriginales[i].y);
 
-for (let i = 0; i < partesCara.length; i++) {
-  let parte = partesCara[i];
+    if (volumenSuavizado > umbralCalido && distanciaActual < desplazamientoMaximo) {
+      parte.x += dxCentro * map(volumenSuavizado, 0, 0.3, 0.01, 0.1);
+      parte.y += dyCentro * map(volumenSuavizado, 0, 0.3, 0.01, 0.1);
+    } else {
+      parte.x = lerp(parte.x, posicionesOriginales[i].x, 0.05);
+      parte.y = lerp(parte.y, posicionesOriginales[i].y, 0.05);
+    }
 
-  let centroX = width / 2;
-  let centroY = height / 2;
-  let dxCentro = centroX - (parte.x + parte.w / 2);
-  let dyCentro = centroY - (parte.y + parte.h / 2);
+    push();
+    translate(parte.x, parte.y);
+    colorMode(HSB);
+    let saturacionDinamica = map(volumenSuavizado, 0, 0.3, 50, 255);
+saturacionDinamica = constrain(saturacionDinamica, 50, 255);
+    let h = 30;
+    tint(h, saturacionDinamica, 255 * currentTonoFactor);
 
-  let distanciaActual = dist(parte.x, parte.y, posicionesOriginales[i].x, posicionesOriginales[i].y);
+    if (parte.nombre === "boca") {
+      let apertura = constrain(map(volumenSuavizado, 0, 0.2, 0, 50), 0, 50);
+      image(parte.img, 0, apertura, parte.w, parte.h);
+    } else if (parte.nombre === "ojo") {
+      let agrandarOjo = map(volumenSuavizado, 0, 0.3, 0, 20);
+      image(parte.img, 0, -agrandarOjo, parte.w, parte.h + agrandarOjo);
+    } else {
+      image(parte.img, 0, 0, parte.w, parte.h);
+    }
 
-  if (volumenSuavizado > umbralCalido && distanciaActual < desplazamientoMaximo) {
-    parte.x += dxCentro * map(volumenSuavizado, 0, 0.3, 0.01, 0.1);
-    parte.y += dyCentro * map(volumenSuavizado, 0, 0.3, 0.01, 0.1);
-  } else {
-    parte.x = lerp(parte.x, posicionesOriginales[i].x, 0.05);
-    parte.y = lerp(parte.y, posicionesOriginales[i].y, 0.05);
+    pop();
   }
-
-  push();
-  translate(parte.x, parte.y);
-  colorMode(HSB);
-  let h = 30;
-  tint(h, 255, 255 * currentTonoFactor);
-
-  if (parte.nombre === "boca") {
-    let apertura = constrain(map(volumenSuavizado, 0, 0.2, 0, 50), 0, 50);
-    image(parte.img, 0, apertura, parte.w, parte.h);
-  } else if (parte.nombre === "ojo") {
-    let agrandarOjo = map(volumenSuavizado, 0, 0.3, 0, 20);
-    image(parte.img, 0, -agrandarOjo, parte.w, parte.h + agrandarOjo);
-  } else {
-    image(parte.img, 0, 0, parte.w, parte.h);
-  }
-
-  pop();
-}
 }
 
 function iniciarReconocimiento() {
@@ -185,10 +214,11 @@ function iniciarReconocimiento() {
     };
 
     reconocimiento.onend = () => {
-  console.log("Reconocimiento reiniciado");
-  reconocimiento.start();
-};
+      console.log("Reconocimiento reiniciado");
+      reconocimiento.start();
+    };
 
+    reconocimiento.start();
   } else {
     console.warn("Este navegador no soporta reconocimiento de voz.");
   }
