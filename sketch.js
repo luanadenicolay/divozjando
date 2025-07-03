@@ -120,12 +120,16 @@ function setup() {
 function draw() {
   background(0);
 
-
+  // Obtener niveles de sonido
   let volumen = mic.getLevel() * 5;
   volumenSuavizado = lerp(volumenSuavizado, volumen, 0.1);
   let espectro = fft.analyze();
+
+  // Graves y Agudos
+  let graves = fft.getEnergy(20, 250);
   let agudos = fft.getEnergy(4000, 8000);
 
+  // Ajuste del tono general
   if (volumenSuavizado > umbralRuido) {
     if (volumenSuavizado > umbralCalido) {
       targetTonoFactor = 1.5;
@@ -140,22 +144,33 @@ function draw() {
 
   currentTonoFactor = lerp(currentTonoFactor, targetTonoFactor, 0.05);
 
-  // Dibujar capas con su tinte único
- push();
-colorMode(HSB);
+  // Calcular tinte dinámico según espectro
+  let pesoGraves = map(graves, 0, 255, 0, 1);
+  let pesoAgudos = map(agudos, 0, 255, 0, 1);
+  let colorHueBase = lerp(240, 40, pesoAgudos); // 240 = azul, 40 = naranja
+  colorHueBase = constrain(colorHueBase, 0, 360);
 
-// Mapea la saturación con el volumen (más voz = más color)
-let saturacionDinamica = map(volumenSuavizado, 0, 0.3, 50, 255);
-saturacionDinamica = constrain(saturacionDinamica, 50, 255);
+  // Dibujar capas con mezcla de color base
+  push();
+  colorMode(HSB);
 
-for (let r = 0; r < cantCapas; r++) {
-  let h = colorHuePorCapa[r];
-  tint(h, saturacionDinamica, 255);
-  image(resultados[r], 0, 0);
-}
-pop();
+  let saturacionDinamica = map(volumenSuavizado, 0, 0.3, 50, 255);
+  saturacionDinamica = constrain(saturacionDinamica, 50, 255);
+
+  for (let r = 0; r < cantCapas; r++) {
+    let mezclaFactor = map(volumenSuavizado, 0, 0.3, 0.0, 1.0);
+mezclaFactor = constrain(mezclaFactor, 0.0, 1.0);
+let h = lerp(colorHuePorCapa[r], colorHueBase, mezclaFactor);
+
+    tint(h, saturacionDinamica, 255);
+    image(resultados[r], 0, 0);
+  }
+  pop();
 
   // Dibujar y mover partes de la cara
+let colorHueOriginal = colorHuePorCapa.reduce((a, b) => a + b, 0) / cantCapas;
+
+
   for (let i = 0; i < partesCara.length; i++) {
     let parte = partesCara[i];
     let centroX = width / 2;
@@ -176,8 +191,11 @@ pop();
     translate(parte.x, parte.y);
     colorMode(HSB);
     let saturacionDinamica = map(volumenSuavizado, 0, 0.3, 50, 255);
-saturacionDinamica = constrain(saturacionDinamica, 50, 255);
-    let h = 30;
+    saturacionDinamica = constrain(saturacionDinamica, 50, 255);
+    let mezclaFactor = map(volumenSuavizado, 0, 0.3, 0.0, 1.0);
+mezclaFactor = constrain(mezclaFactor, 0.0, 1.0);
+let h = lerp(colorHueOriginal, colorHueBase, mezclaFactor);
+
     tint(h, saturacionDinamica, 255 * currentTonoFactor);
 
     if (parte.nombre === "boca") {
@@ -193,6 +211,7 @@ saturacionDinamica = constrain(saturacionDinamica, 50, 255);
     pop();
   }
 }
+
 
 function iniciarReconocimiento() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
